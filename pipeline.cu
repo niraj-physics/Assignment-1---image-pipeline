@@ -303,13 +303,33 @@ int main(int argc, char **argv) {
 
   // TODO fix
   dim3 block(16, 16); // 16 threads in x, 16 in y = 256 threads/block
-  dim3 grid((Wc + block.x - 1) / block.x, (Hc + block.y - 1) / block.y);
+  dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y);
   // TODO fix
 
   grayscaleKernel<<<grid, block>>>(d_rgb, d_gray, H, W);
+  cudaDeviceSynchronize();
+  fprintf(stderr, "grayscale: %s\n", cudaGetErrorString(cudaGetLastError()));
+
   resizeKernel<<<grid, block>>>(d_gray, d_resized, H, W, Hr, Wr);
+  cudaDeviceSynchronize();
+  fprintf(stderr, "resize: %s\n", cudaGetErrorString(cudaGetLastError()));
+
   cropKernel<<<grid, block>>>(d_resized, d_cropped, Hr, Wr, Hc, Wc);
+  cudaDeviceSynchronize();
+  fprintf(stderr, "crop: %s\n", cudaGetErrorString(cudaGetLastError()));
+
   normalizeKernel<<<grid, block>>>(d_cropped, d_out, Hc, Wc, mean, stdv);
+  cudaDeviceSynchronize();
+  fprintf(stderr, "normalize: %s\n", cudaGetErrorString(cudaGetLastError()));
+
+  // grayscaleKernel<<<grid, block>>>(d_rgb, d_gray, H, W);
+  // cudaDeviceSynchronize();
+  // resizeKernel<<<grid, block>>>(d_gray, d_resized, H, W, Hr, Wr);
+  // cudaDeviceSynchronize();
+  // cropKernel<<<grid, block>>>(d_resized, d_cropped, Hr, Wr, Hc, Wc);
+  // cudaDeviceSynchronize();
+  // normalizeKernel<<<grid, block>>>(d_cropped, d_out, Hc, Wc, mean, stdv);
+  // cudaDeviceSynchronize();
 
   // ==== END TODO 7 ====
 
