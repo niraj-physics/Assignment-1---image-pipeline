@@ -39,7 +39,9 @@
  * ========================================================================== */
 
 /* ---------------- DO NOT MODIFY : INCLUDES AND MACROS ---------------- */
-#include <__clang_cuda_builtin_vars.h>
+// TODO uncomment this line , as there is a compiling issue with it
+//  #include <__clang_cuda_builtin_vars.h>
+//  TODO uncomment before submitting code
 #include <cmath>
 #include <cuda_runtime.h>
 #include <math.h>
@@ -72,12 +74,17 @@ __global__ void grayscaleKernel(const unsigned char *d_rgb, float *d_gray,
   //
   // Hints:
   //   * Cast the unsigned char values to float before doing arithmetic.
-  int x = threadIdx.x;
-  int y = threadIdx.y;
-  int id = y * W + x;
-
-  d_gray[id] = W_RED * (float)d_rgb[id] + W_GREEN * (float)d_rgb[id + 1] +
-               W_BLUE * (float)d_rgb[id + 2];
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= W || y >= H)
+    return;
+  // int x = threadIdx.x;
+  // int y = threadIdx.y;
+  int id = (y * W + x);
+  int rgb_id = 3 * id;
+  d_gray[id] = W_RED * (float)d_rgb[rgb_id] +
+               W_GREEN * (float)d_rgb[rgb_id + 1] +
+               W_BLUE * (float)d_rgb[rgb_id + 2];
 
   // ==== END TODO 1 ====
 }
@@ -109,8 +116,12 @@ __global__ void resizeKernel(const float *d_gray, float *d_resized, int H,
   // Hints:
   //   * floorf() and min() are available inside device code.
 
-  int x = threadIdx.x;
-  int y = threadIdx.y;
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  // int x = threadIdx.x;
+  // int y = threadIdx.y;
+  if (x >= Wr || y >= Hr)
+    return;
 
   float scaleY = (Hr > 1) ? (float)(H - 1) / (float)(Hr - 1) : 0.0f;
   float scaleX = (Wr > 1) ? (float)(W - 1) / (float)(Wr - 1) : 0.0f;
@@ -130,7 +141,7 @@ __global__ void resizeKernel(const float *d_gray, float *d_resized, int H,
   float bottom = d_gray[(int)y1 * W + (int)x0] * (1 - wx) +
                  d_gray[(int)y1 * W + (int)x1] * wx;
 
-  d_resized[y * W + x] = top * (1 - wy) + bottom * wy;
+  d_resized[y * Wr + x] = top * (1 - wy) + bottom * wy;
   // TODO check this section throughly
 
   // ==== END TODO 2 ====
@@ -153,9 +164,14 @@ __global__ void cropKernel(const float *d_resized, float *d_cropped, int Hr,
   // Hints:
   //   * Pure index arithmetic - no interpolation.
   //   * The input row stride is Wr, the output row stride is Wc.
-  int x = threadIdx.x, y = threadIdx.y;
+
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= Wc || y >= Hc)
+    return;
+  // int x = threadIdx.x, y = threadIdx.y;
   float offy = floorf((Hr - Hc) / 2.0f), offx = floorf((Wr - Wc) / 2.0f);
-  d_cropped[y * Wr + x] = d_resized[(y + (int)offy) * Wr + (x + int(offx))];
+  d_cropped[y * Wc + x] = d_resized[(y + (int)offy) * Wr + (x + int(offx))];
 
   // ==== END TODO 3 ====
 }
@@ -175,7 +191,11 @@ __global__ void normalizeKernel(const float *d_cropped, float *d_out, int Hc,
   // Hints:
   //   * Element-wise, so a 1-D grid over Hc*Wc elements works.
 
-  int x = threadIdx.x, y = threadIdx.y;
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= Wc || y >= Hc)
+    return;
+  // int x = threadIdx.x, y = threadIdx.y;
   d_out[y * Wc + x] = (d_cropped[y * Wc + x] / 255.0 - mean) / stdv;
   // ==== END TODO 4 ====
 }
@@ -270,7 +290,8 @@ int main(int argc, char **argv) {
   // ==== TODO 6 : copy the input image from host to device ====
   //
   // Copy h_rgb (nRgb bytes) into d_rgb
-  cudaMemcpy(d_rgb, h_rgb, sizeof(unsigned char), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_rgb, h_rgb, H * W * 3 * sizeof(unsigned char),
+             cudaMemcpyHostToDevice);
 
   // ==== END TODO 6 ====
 
@@ -280,11 +301,20 @@ int main(int argc, char **argv) {
   // Launch order:  grayscale -> resize -> crop -> normalize
   // Data flow   :  d_rgb -> d_gray -> d_resized -> d_cropped -> d_out
 
-  grayscaleKernel(const unsigned char *d_rgb, float *d_gray, int H, int W)
-      // ==== END TODO 7 ====
+  // TODO fix
+  dim3 block(16, 16); // 16 threads in x, 16 in y = 256 threads/block
+  dim3 grid((Wc + block.x - 1) / block.x, (Hc + block.y - 1) / block.y);
+  // TODO fix
 
-      // ==== TODO 8 : copy the final result from device to host ====
-      cudaMemcpy(h_out, d_out, sizeof(int) * Hc * Wc, cudaMemcpyDeviceToHost);
+  grayscaleKernel<<<grid, block>>>(d_rgb, d_gray, H, W);
+  resizeKernel<<<grid, block>>>(d_gray, d_resized, H, W, Hr, Wr);
+  cropKernel<<<grid, block>>>(d_resized, d_cropped, Hr, Wr, Hc, Wc);
+  normalizeKernel<<<grid, block>>>(d_cropped, d_out, Hc, Wc, mean, stdv);
+
+  // ==== END TODO 7 ====
+
+  // ==== TODO 8 : copy the final result from device to host ====
+  cudaMemcpy(h_out, d_out, sizeof(float) * Hc * Wc, cudaMemcpyDeviceToHost);
   //
   // Copy nPixCrop floats from d_out into h_out.
 
